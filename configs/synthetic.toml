@@ -1,0 +1,19 @@
+[experiment]
+name = "synthetic-smoke"
+seed = 7
+samples = 32
+warmup = 3
+iterations = 20
+
+[model]
+name = "synthetic-linear"
+input_shape = [12, 128]
+output_labels = 4
+optimization = "fp32"
+
+[runtime]
+provider = "reference-python"
+threads = 1
+
+[output]
+path = "results/synthetic-smoke.json"

@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+src/edge_ai_bench/__init__.py
+src/edge_ai_bench/benchmark.py
+src/edge_ai_bench/cli.py
+src/edge_ai_bench/config.py
+src/edge_ai_bench/synthetic.py
+src/edge_ai_bench.egg-info/PKG-INFO
+src/edge_ai_bench.egg-info/SOURCES.txt
+src/edge_ai_bench.egg-info/dependency_links.txt
+src/edge_ai_bench.egg-info/entry_points.txt
+src/edge_ai_bench.egg-info/requires.txt
+src/edge_ai_bench.egg-info/top_level.txt
+tests/test_smoke.py
