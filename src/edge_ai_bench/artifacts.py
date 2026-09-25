@@ -48,6 +48,16 @@ class OutputComparison:
     allclose: bool
 
 
+def validate_outputs(reference_outputs: list[Any], candidate_outputs: list[Any], *, atol: float = 1e-5, rtol: float = 1e-5) -> list[OutputComparison]:
+    """Compare every corresponding output tensor and reject count mismatches."""
+    if len(reference_outputs) != len(candidate_outputs):
+        raise ValueError("reference and candidate output counts must match")
+    return [
+        compare_outputs(reference, candidate, atol=atol, rtol=rtol)
+        for reference, candidate in zip(reference_outputs, candidate_outputs)
+    ]
+
+
 def compare_outputs(reference: Any, candidate: Any, *, atol: float = 1e-5, rtol: float = 1e-5) -> OutputComparison:
     """Compare array-like outputs using the same tolerance contract as NumPy."""
     if atol < 0 or rtol < 0:

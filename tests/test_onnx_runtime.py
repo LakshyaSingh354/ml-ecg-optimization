@@ -1,6 +1,6 @@
 import pytest
 
-from edge_ai_bench.artifacts import compare_outputs, inspect_artifact
+from edge_ai_bench.artifacts import compare_outputs, inspect_artifact, validate_outputs
 from edge_ai_bench.onnx_runtime import OnnxRuntimeConfig, OnnxRuntimeSession
 
 
@@ -61,3 +61,8 @@ def test_artifact_inspection_and_output_tolerance(tmp_path):
     assert metadata.size_kib > 0
     assert close.allclose
     assert not different.allclose
+
+
+def test_validate_outputs_requires_matching_output_count():
+    with pytest.raises(ValueError, match="output counts"):
+        validate_outputs([[1.0]], [])

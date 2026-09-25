@@ -18,6 +18,11 @@ The current package also includes PTB-XL metadata parsing and per-lead normaliza
 primitives. These operate on metadata or arrays supplied by the caller; the repository
 does not download or store patient data.
 
+The real baseline runner is available as a Python API through
+`edge_ai_bench.real_baseline.run_baseline`. It downloads metadata and requested
+waveforms at runtime, trains a bounded scikit-learn multilabel baseline on official
+PTB-XL folds 1-8/9/10, exports ONNX, checks output agreement, and records CPU latency.
+
 ## Setup
 
 ```bash
@@ -31,6 +36,19 @@ Run the smoke benchmark:
 ```bash
 edge-ai-bench benchmark --config configs/synthetic.toml
 ```
+
+Run the representative real PTB-XL baseline:
+
+```bash
+edge-ai-bench real-baseline
+```
+
+This downloads metadata and 1,400 selected 100 Hz waveform records into ignored local
+directories, trains a feature-based multilabel logistic baseline on folds 1-8, saves
+the source checkpoint as `artifacts/ptbxl-logistic.joblib`, exports the FP32 deployment
+artifact as `artifacts/ptbxl-logistic-fp32.onnx`, validates ONNX outputs against the
+source model, and writes `results/ptbxl-baseline.json`. Smaller limits can be passed
+explicitly for a network smoke check.
 
 Run tests:
 
