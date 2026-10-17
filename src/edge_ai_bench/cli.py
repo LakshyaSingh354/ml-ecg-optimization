@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .benchmark import run, write_result
+from .checkpoint_baseline import CheckpointBaselineConfig, run_checkpoint_baseline
 from .config import load_config
 from .real_baseline import RealBaselineConfig, run_baseline
 from .synthetic import make_batch
@@ -19,6 +20,10 @@ def main() -> None:
     baseline_parser.add_argument("--train-limit", type=int, default=1000)
     baseline_parser.add_argument("--validation-limit", type=int, default=200)
     baseline_parser.add_argument("--test-limit", type=int, default=200)
+    checkpoint_parser = subparsers.add_parser("checkpoint-baseline", help="evaluate the downloaded ResNet-Transformer checkpoint")
+    checkpoint_parser.add_argument("--train-limit", type=int, default=1000)
+    checkpoint_parser.add_argument("--validation-limit", type=int, default=200)
+    checkpoint_parser.add_argument("--test-limit", type=int, default=200)
     args = parser.parse_args()
 
     if args.command == "benchmark":
@@ -39,6 +44,20 @@ def main() -> None:
             "metrics": result["metrics"],
             "artifact": result["artifact"],
             "checkpoint": result["checkpoint"],
+            "benchmark": result["benchmark"],
+        }, indent=2))
+    elif args.command == "checkpoint-baseline":
+        result = run_checkpoint_baseline(CheckpointBaselineConfig(
+            train_limit=args.train_limit,
+            validation_limit=args.validation_limit,
+            test_limit=args.test_limit,
+        ))
+        print(json.dumps({
+            "status": result["status"],
+            "splits": result["splits"],
+            "metrics": result["metrics"],
+            "artifact": result["artifact"],
+            "validation": result["validation"],
             "benchmark": result["benchmark"],
         }, indent=2))
 
