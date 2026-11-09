@@ -56,6 +56,57 @@ Run tests:
 python -m pytest
 ```
 
+The checkpoint benchmark evaluates the FP32 artifact through both PyTorch (reference)
+and ONNX Runtime (deployment) paths. The ONNX Runtime result records initialization
+time, provider, graph optimization level, thread count, peak RSS measurements, and
+latency/throughput for batch sizes 1, 4, 8, and 16. Override runtime settings when
+comparing configurations:
+
+```bash
+edge-ai-bench checkpoint-baseline --onnx-threads 4 --onnx-optimization all
+```
+
+Run the FP32 runtime sweep across graph optimization levels and thread counts:
+
+```bash
+edge-ai-bench checkpoint-sweep --threads 1 2 4 8
+```
+
+The sweep writes `results/ecg-hybrid-net-fp32-sweep.json` and uses the same fixed
+PTB-XL train/test selection and preprocessing as the checkpoint baseline.
+
+Generate compiler and quantization variants:
+
+```bash
+edge-ai-bench optimize-checkpoint --threads 2 --calibration-limit 100
+```
+
+This writes `results/ecg-hybrid-net-optimizations.json` and evaluates four explicit
+conditions:
+
+1. **Baseline**: original FP32 graph with ONNX Runtime graph optimization disabled.
+2. **Compiler only**: serialized `ORT_ENABLE_EXTENDED` FP32 graph with runtime
+   optimization disabled at load time.
+3. **Quantization only**: dynamic and static INT8 artifacts generated from the
+   original FP32 graph, loaded without runtime graph optimization.
+4. **Compiler plus quantization**: original graph is quantized first, then each
+   INT8 artifact is serialized through `ORT_ENABLE_EXTENDED`, and loaded without
+   runtime graph optimization.
+
+Every variant is evaluated on the fixed PTB-XL test selection with artifact size,
+macro AUROC/F1, output error, initialization time, RSS, latency, and throughput.
+The optimization result also records per-class AUROC/F1, the exact calibration
+record IDs and their SHA-256 identity, three repeated timing runs, and the
+non-dominated Pareto variants for artifact size, batch-1 latency, and macro F1.
+The static quantization result is a systems measurement, not clinical validation;
+calibration identity and the fixed test split must remain unchanged when comparing
+future variants.
+
+The reported current RSS and peak RSS values are process-level measurements. The
+initialization RSS delta is sampled around ONNX Runtime session creation, while
+`resource.getrusage` peak RSS is cumulative for the process; compare runs on the
+same host and do not interpret either value as isolated tensor allocation size.
+
 ## Research protocol
 
 The planned real-data comparison is FP32 versus ONNX Runtime graph optimization,

@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 
 from .benchmark import run, write_result
-from .checkpoint_baseline import CheckpointBaselineConfig, run_checkpoint_baseline
+from .checkpoint_baseline import CheckpointBaselineConfig, CheckpointSweepConfig, run_checkpoint_baseline, run_checkpoint_sweep
 from .config import load_config
 from .real_baseline import RealBaselineConfig, run_baseline
+from .optimizations import OptimizationConfig, run_optimizations
 from .synthetic import make_batch
 
 
@@ -24,6 +25,26 @@ def main() -> None:
     checkpoint_parser.add_argument("--train-limit", type=int, default=1000)
     checkpoint_parser.add_argument("--validation-limit", type=int, default=200)
     checkpoint_parser.add_argument("--test-limit", type=int, default=200)
+    checkpoint_parser.add_argument("--onnx-threads", type=int, default=1)
+    checkpoint_parser.add_argument(
+        "--onnx-optimization",
+        choices=("disabled", "basic", "extended", "all"),
+        default="all",
+    )
+    sweep_parser = subparsers.add_parser("checkpoint-sweep", help="sweep FP32 ONNX Runtime settings")
+    sweep_parser.add_argument("--threads", type=int, nargs="+", default=[1, 2, 4, 8])
+    sweep_parser.add_argument(
+        "--optimizations",
+        nargs="+",
+        choices=("disabled", "basic", "extended", "all"),
+        default=["disabled", "basic", "extended", "all"],
+    )
+    optimization_parser = subparsers.add_parser(
+        "optimize-checkpoint",
+        help="compile and quantize the checkpoint deployment artifact",
+    )
+    optimization_parser.add_argument("--threads", type=int, default=2)
+    optimization_parser.add_argument("--calibration-limit", type=int, default=100)
     args = parser.parse_args()
 
     if args.command == "benchmark":
@@ -45,6 +66,25 @@ def main() -> None:
             "artifact": result["artifact"],
             "checkpoint": result["checkpoint"],
             "benchmark": result["benchmark"],
+        }, indent=2))
+    elif args.command == "checkpoint-sweep":
+        result = run_checkpoint_sweep(CheckpointSweepConfig(
+            thread_counts=tuple(args.threads),
+            optimizations=tuple(args.optimizations),
+        ))
+        print(json.dumps({
+            "status": result["status"],
+            "artifact": result["experiment"]["artifact"],
+            "results": result["results"],
+        }, indent=2))
+    elif args.command == "optimize-checkpoint":
+        result = run_optimizations(OptimizationConfig(
+            threads=args.threads,
+            calibration_limit=args.calibration_limit,
+        ))
+        print(json.dumps({
+            "status": result["status"],
+            "variants": result["variants"],
         }, indent=2))
     elif args.command == "checkpoint-baseline":
         result = run_checkpoint_baseline(CheckpointBaselineConfig(
