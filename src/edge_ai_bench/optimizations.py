@@ -6,7 +6,11 @@ import json
 import os
 from pathlib import Path
 import platform
+import subprocess
+import sys
+import tempfile
 import time
+import gc
 from typing import Any
 
 import numpy as np
@@ -14,12 +18,10 @@ import numpy as np
 from .artifacts import compare_outputs, inspect_artifact
 from .checkpoint_baseline import (
     CheckpointBaselineConfig,
-    _benchmark_onnx,
     _current_rss_bytes,
     _load_arrays,
     _metrics,
     _select,
-    _standardize,
 )
 from .onnx_runtime import OnnxRuntimeConfig, OnnxRuntimeSession
 from .ptbxl import load_metadata, load_statement_map
@@ -45,12 +47,22 @@ class OptimizationConfig:
     threads: int = 2
     batch_sizes: tuple[int, ...] = (1, 4, 8, 16)
     repeats: int = 3
+    evaluation_batch_size: int = 64
+    isolated_repeats: int = 3
+    quantization_per_channel: bool = True
+    calibration_method: str = "minmax"
 
     def __post_init__(self) -> None:
         if min(self.train_limit, self.test_limit, self.calibration_limit, self.iterations, self.repeats) <= 0:
             raise ValueError("dataset limits and iterations must be positive")
         if self.warmup < 0 or self.threads <= 0:
             raise ValueError("warmup must be non-negative and threads must be positive")
+        if self.evaluation_batch_size <= 0:
+            raise ValueError("evaluation_batch_size must be positive")
+        if self.isolated_repeats <= 0:
+            raise ValueError("isolated_repeats must be positive")
+        if self.calibration_method not in {"minmax", "percentile"}:
+            raise ValueError("calibration_method must be minmax or percentile")
 
 
 class _CalibrationReader:
@@ -67,7 +79,7 @@ class _CalibrationReader:
         raise RuntimeError("calibration reader is single-use")
 
 
-def _load_data(config: OptimizationConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], str]:
+def _load_data(config: OptimizationConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, list[int], str]:
     statement_map = load_statement_map(config.data_dir / "scp_statements.csv")
     records = load_metadata(config.data_dir / "ptbxl_database.csv", statement_map)
     train_records = _select(records, 1, 8, config.train_limit)
@@ -77,15 +89,30 @@ def _load_data(config: OptimizationConfig) -> tuple[np.ndarray, np.ndarray, np.n
         data_dir=config.data_dir,
         download_workers=config.download_workers,
     )
-    train, _ = _load_arrays(train_records, loader_config)
+    train_sum = 0.0
+    train_sum_squares = 0.0
+    train_count = 0
+    chunk_size = 256
+    for start in range(0, len(train_records), chunk_size):
+        chunk, _ = _load_arrays(train_records[start:start + chunk_size], loader_config)
+        values = chunk.astype(np.float64, copy=False)
+        train_sum += float(values.sum())
+        train_sum_squares += float(np.square(values).sum())
+        train_count += values.size
+        del chunk
+        gc.collect()
+    train_mean = train_sum / train_count
+    train_variance = max(0.0, train_sum_squares / train_count - train_mean * train_mean)
+    train_scale = np.sqrt(train_variance) if train_variance > 0 else 1.0
     calibration, _ = _load_arrays(calibration_records, loader_config)
     test, labels = _load_arrays(test_records, loader_config)
-    train, calibration, test, _ = _standardize(train, calibration, test)
+    calibration = ((calibration - train_mean) / train_scale).astype(np.float32)
+    test = ((test - train_mean) / train_scale).astype(np.float32)
     calibration_ids = [record.ecg_id for record in calibration_records]
     calibration_hash = hashlib.sha256(
         json.dumps(calibration_ids, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return calibration, test, labels, calibration_ids, calibration_hash
+    return calibration, test, labels, len(train_records), calibration_ids, calibration_hash
 
 
 def _compile_graph(input_path: Path, output_path: Path) -> None:
@@ -99,7 +126,15 @@ def _compile_graph(input_path: Path, output_path: Path) -> None:
     del session
 
 
-def _quantize(input_path: Path, dynamic_path: Path, static_path: Path, calibration: np.ndarray) -> None:
+def _quantize(
+    input_path: Path,
+    dynamic_path: Path,
+    static_path: Path,
+    calibration: np.ndarray,
+    *,
+    per_channel: bool,
+    calibration_method: str,
+) -> None:
     from onnxruntime.quantization import (
         CalibrationMethod,
         QuantFormat,
@@ -113,7 +148,7 @@ def _quantize(input_path: Path, dynamic_path: Path, static_path: Path, calibrati
         str(input_path),
         str(dynamic_path),
         weight_type=QuantType.QInt8,
-        per_channel=True,
+        per_channel=per_channel,
         extra_options={"DefaultTensorType": "float32"},
     )
     quantize_static(
@@ -123,8 +158,11 @@ def _quantize(input_path: Path, dynamic_path: Path, static_path: Path, calibrati
         quant_format=QuantFormat.QDQ,
         activation_type=QuantType.QUInt8,
         weight_type=QuantType.QInt8,
-        per_channel=True,
-        calibrate_method=CalibrationMethod.MinMax,
+        per_channel=per_channel,
+        calibrate_method={
+            "minmax": CalibrationMethod.MinMax,
+            "percentile": CalibrationMethod.Percentile,
+        }[calibration_method],
         extra_options={"DefaultTensorType": "float32"},
     )
 
@@ -137,6 +175,7 @@ def _evaluate_artifact(
     labels: np.ndarray,
     config: OptimizationConfig,
     calibration_hash: str,
+    signals_path: Path,
     runtime_optimization: str = "disabled",
 ) -> dict[str, Any]:
     artifact = inspect_artifact(path)
@@ -146,16 +185,13 @@ def _evaluate_artifact(
         OnnxRuntimeConfig(threads=config.threads, optimization=runtime_optimization),
     )
     initialization_seconds = time.perf_counter() - session_started
-    logits = session.run(np.ascontiguousarray(test).transpose(0, 2, 1))[0]
+    logits = _predict_onnx_in_chunks(session, test, config.evaluation_batch_size)
     probabilities = 1.0 / (1.0 + np.exp(-logits))
     comparison = compare_outputs(reference_logits, logits, atol=1e-1, rtol=1e-1)
-    benchmark_runs = [
-        _benchmark_onnx(session, test, config.warmup, config.iterations, config.batch_sizes)
-        for _ in range(config.repeats)
-    ]
+    benchmark_runs = _isolated_benchmarks(path, signals_path, config)
     batches = {}
     for batch_size in config.batch_sizes:
-        measurements = [run[str(batch_size)] for run in benchmark_runs]
+        measurements = [run["batches"][str(batch_size)] for run in benchmark_runs]
         batches[str(batch_size)] = {
             "batch_size": batch_size,
             "repeats": config.repeats,
@@ -181,23 +217,77 @@ def _evaluate_artifact(
             "optimization": session.optimization,
             "initialization_seconds": initialization_seconds,
             "process_current_rss_bytes": _current_rss_bytes(),
+            "measurement_mode": "fresh_subprocess_per_repeat",
+            "isolated_repeats": config.isolated_repeats,
+            "isolated_runs": benchmark_runs,
+            "isolated_memory": {
+                "current_rss_bytes_median": int(np.median([run["current_rss_bytes"] for run in benchmark_runs])),
+                "peak_rss_bytes_median": int(np.median([run["peak_rss_bytes"] for run in benchmark_runs])),
+                "peak_rss_bytes_max": max(run["peak_rss_bytes"] for run in benchmark_runs),
+            },
             "batches": batches,
         },
     }
 
 
+def _isolated_benchmarks(
+    artifact: Path,
+    signals_path: Path,
+    config: OptimizationConfig,
+) -> list[dict[str, Any]]:
+    command = [
+        sys.executable,
+        "-m",
+        "edge_ai_bench.isolated_benchmark",
+        "--artifact", str(artifact),
+        "--signals", str(signals_path),
+        "--threads", str(config.threads),
+        "--optimization", "disabled",
+        "--warmup", str(config.warmup),
+        "--iterations", str(config.iterations),
+        "--batch-sizes", *(str(size) for size in config.batch_sizes),
+    ]
+    return [
+        json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
+        for _ in range(config.isolated_repeats)
+    ]
+
+
+def _predict_onnx_in_chunks(session: OnnxRuntimeSession, signals: np.ndarray, batch_size: int) -> np.ndarray:
+    outputs = []
+    for start in range(0, len(signals), batch_size):
+        batch = np.ascontiguousarray(signals[start:start + batch_size]).transpose(0, 2, 1)
+        outputs.append(session.run(batch)[0])
+        del batch
+    return np.concatenate(outputs, axis=0)
+
+
 def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
     """Evaluate four isolated compiler and quantization experiment conditions."""
-    calibration, test, labels, calibration_ids, calibration_hash = _load_data(config)
+    calibration, test, labels, selected_train_records, calibration_ids, calibration_hash = _load_data(config)
     reference_session = OnnxRuntimeSession(
         config.input_path,
         OnnxRuntimeConfig(threads=config.threads, optimization="disabled"),
     )
-    reference_logits = reference_session.run(np.ascontiguousarray(test).transpose(0, 2, 1))[0]
+    reference_logits = _predict_onnx_in_chunks(
+        reference_session,
+        test,
+        config.evaluation_batch_size,
+    )
     _compile_graph(config.input_path, config.optimized_path)
-    _quantize(config.input_path, config.dynamic_path, config.static_path, calibration)
+    _quantize(
+        config.input_path,
+        config.dynamic_path,
+        config.static_path,
+        calibration,
+        per_channel=config.quantization_per_channel,
+        calibration_method=config.calibration_method,
+    )
     _compile_graph(config.dynamic_path, config.optimized_dynamic_path)
     _compile_graph(config.static_path, config.optimized_static_path)
+    signals_directory = tempfile.TemporaryDirectory(prefix="edge-ai-benchmark-")
+    signals_path = Path(signals_directory.name) / "test-signals.npy"
+    np.save(signals_path, test)
     experiments = [
         {
             "name": "baseline",
@@ -239,6 +329,7 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
                     labels,
                     config,
                     calibration_hash,
+                    signals_path,
                 )
                 for variant_name, variant_path in experiment["variants"]
             ],
@@ -252,6 +343,8 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
             "source": PTBXL_URL,
             "train_samples": config.train_limit,
             "test_samples": len(test),
+            "selected_train_records": selected_train_records,
+            "selected_test_records": len(test),
             "calibration_samples": len(calibration),
             "calibration_split": "train folds 1-8, first deterministic records",
             "calibration_record_ids": calibration_ids,
@@ -261,6 +354,10 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
             "runtime_optimization": "disabled",
             "compiler_optimization": "ORT_ENABLE_EXTENDED",
             "combined_order": "quantize original graph, then serialize optimized INT8 graph",
+            "evaluation_batch_size": config.evaluation_batch_size,
+            "isolated_repeats": config.isolated_repeats,
+            "quantization_per_channel": config.quantization_per_channel,
+            "calibration_method": config.calibration_method,
             "conditions": [experiment["name"] for experiment in experiments],
         },
         "environment": {
@@ -275,6 +372,7 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
     }
     config.result_path.parent.mkdir(parents=True, exist_ok=True)
     config.result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    signals_directory.cleanup()
     return result
 
 

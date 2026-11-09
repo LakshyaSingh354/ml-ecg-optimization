@@ -44,7 +44,21 @@ def main() -> None:
         help="compile and quantize the checkpoint deployment artifact",
     )
     optimization_parser.add_argument("--threads", type=int, default=2)
+    optimization_parser.add_argument("--train-limit", type=int, default=1000)
+    optimization_parser.add_argument("--test-limit", type=int, default=200)
     optimization_parser.add_argument("--calibration-limit", type=int, default=100)
+    optimization_parser.add_argument("--result-path", type=Path, default=Path("results/ecg-hybrid-net-optimizations.json"))
+    optimization_parser.add_argument("--isolated-repeats", type=int, default=3)
+    optimization_parser.add_argument(
+        "--per-tensor",
+        action="store_true",
+        help="use per-tensor rather than per-channel weight quantization",
+    )
+    optimization_parser.add_argument(
+        "--calibration-method",
+        choices=("minmax", "percentile"),
+        default="minmax",
+    )
     args = parser.parse_args()
 
     if args.command == "benchmark":
@@ -80,7 +94,13 @@ def main() -> None:
     elif args.command == "optimize-checkpoint":
         result = run_optimizations(OptimizationConfig(
             threads=args.threads,
+            train_limit=args.train_limit,
+            test_limit=args.test_limit,
             calibration_limit=args.calibration_limit,
+            isolated_repeats=args.isolated_repeats,
+            quantization_per_channel=not args.per_tensor,
+            calibration_method=args.calibration_method,
+            result_path=args.result_path,
         ))
         print(json.dumps({
             "status": result["status"],

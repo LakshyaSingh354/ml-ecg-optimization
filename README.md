@@ -81,6 +81,19 @@ Generate compiler and quantization variants:
 edge-ai-bench optimize-checkpoint --threads 2 --calibration-limit 100
 ```
 
+The default is the fast 1,000-train/200-test engineering subset. For the complete
+PTB-XL labeled split, use approximately 4,200 training records and 677 test
+records; missing waveform files are downloaded into the ignored data directory:
+
+```bash
+edge-ai-bench optimize-checkpoint \
+  --threads 2 \
+  --train-limit 4200 \
+  --test-limit 677 \
+  --calibration-limit 500 \
+  --isolated-repeats 3
+```
+
 This writes `results/ecg-hybrid-net-optimizations.json` and evaluates four explicit
 conditions:
 
@@ -106,6 +119,24 @@ The reported current RSS and peak RSS values are process-level measurements. The
 initialization RSS delta is sampled around ONNX Runtime session creation, while
 `resource.getrusage` peak RSS is cumulative for the process; compare runs on the
 same host and do not interpret either value as isolated tensor allocation size.
+Optimization runs now additionally launch a fresh subprocess for every timing
+repeat, using memory-mapped test signals. Each variant records per-process current
+RSS, peak RSS, initialization time, and raw latency/throughput measurements; the
+memory summary reports median and maximum peak RSS across those processes.
+
+Quantization sensitivity variants can be selected without changing the dataset or
+benchmark protocol:
+
+```bash
+# Per-tensor weights with percentile calibration
+edge-ai-bench optimize-checkpoint \
+  --per-tensor \
+  --calibration-method percentile
+```
+
+The default is per-channel weight quantization with MinMax calibration. The result
+manifest records both settings so variants remain directly comparable.
+Use `--result-path` when running exploratory variants to preserve earlier manifests.
 
 ## Research protocol
 
