@@ -368,6 +368,7 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
         "experiments": evaluated_experiments,
         "variants": variants,
         "pareto_frontier": _pareto_frontier(variants),
+        "pareto_frontiers": _pareto_frontiers(variants),
         "status": "compiler_quantization_experiment",
     }
     config.result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -378,14 +379,62 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
 
 def _pareto_frontier(variants: list[dict[str, Any]]) -> list[str]:
     """Return non-dominated variants for size, batch-1 latency, and macro F1."""
-    points = {
-        variant["name"]: (
+    return _pareto_frontier_for(
+        variants,
+        lambda variant: (
             variant["artifact"]["size_bytes"],
             variant["benchmark"]["batches"]["1"]["latency_seconds_p50"],
             -variant["metrics"]["macro_f1"],
-        )
-        for variant in variants
+        ),
+    )
+
+
+def _pareto_frontiers(variants: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Return frontiers for distinct deployment priorities."""
+    batch_one = lambda variant: variant["benchmark"]["batches"]["1"]
+    return {
+        "size_latency_f1": _pareto_frontier(variants),
+        "size_throughput_f1": _pareto_frontier_for(
+            variants,
+            lambda variant: (
+                variant["artifact"]["size_bytes"],
+                -batch_one(variant)["throughput_samples_per_second"],
+                -variant["metrics"]["macro_f1"],
+            ),
+        ),
+        "size_p95_latency_f1": _pareto_frontier_for(
+            variants,
+            lambda variant: (
+                variant["artifact"]["size_bytes"],
+                batch_one(variant)["latency_seconds_p95"],
+                -variant["metrics"]["macro_f1"],
+            ),
+        ),
+        "size_latency_auroc": _pareto_frontier_for(
+            variants,
+            lambda variant: (
+                variant["artifact"]["size_bytes"],
+                batch_one(variant)["latency_seconds_p50"],
+                -variant["metrics"]["macro_auroc"],
+            ),
+        ),
+        "size_latency_f1_memory": _pareto_frontier_for(
+            variants,
+            lambda variant: (
+                variant["artifact"]["size_bytes"],
+                batch_one(variant)["latency_seconds_p50"],
+                -variant["metrics"]["macro_f1"],
+                variant["benchmark"]["isolated_memory"]["current_rss_bytes_median"],
+            ),
+        ),
     }
+
+
+def _pareto_frontier_for(
+    variants: list[dict[str, Any]],
+    point_factory: Any,
+) -> list[str]:
+    points = {variant["name"]: point_factory(variant) for variant in variants}
     frontier = []
     for name, point in points.items():
         dominated = any(

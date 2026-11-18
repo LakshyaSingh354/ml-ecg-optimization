@@ -1,0 +1,22 @@
+{
+  "manifest": "../results/ecg-hybrid-net-final-repeat5-pertensor-minmax.json",
+  "sha256": "60b287cea9af4c31f5fc1427f0308e0295b8b57d5a65ac8ad86f3eb63c0c1ecd",
+  "protocol": {
+    "dataset": "PTB-XL",
+    "selected_test_records": 2050,
+    "threads": 2,
+    "calibration_samples": 100,
+    "calibration_method": "minmax",
+    "weight_quantization": "per-tensor",
+    "isolated_repeats": 5,
+    "batch_sizes": [1, 4, 8, 16]
+  },
+  "variants": [
+    "fp32",
+    "fp32_compiled",
+    "int8_dynamic",
+    "int8_static",
+    "int8_dynamic_compiled",
+    "int8_static_compiled"
+  ]
+}
