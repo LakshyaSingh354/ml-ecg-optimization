@@ -36,3 +36,7 @@ The paper now includes a related-work section covering PTB-XL/ECG deep
 learning, residual architectures, model compression and quantization, and
 deep-learning compilers/inference runtimes. Citation entries are maintained in
 `references.bib`.
+
+The operator-level evidence for the Static INT8 versus Compiled Static INT8
+interaction is documented in [operator-analysis.md](operator-analysis.md), with
+the machine-readable comparison in [operator-analysis.json](operator-analysis.json).

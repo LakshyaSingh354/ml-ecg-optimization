@@ -9,6 +9,7 @@ from .checkpoint_baseline import CheckpointBaselineConfig, CheckpointSweepConfig
 from .config import load_config
 from .real_baseline import RealBaselineConfig, run_baseline
 from .optimizations import OptimizationConfig, run_optimizations
+from .operator_analysis import analyze_operator_interaction
 from .synthetic import make_batch
 
 
@@ -59,6 +60,25 @@ def main() -> None:
         choices=("minmax", "percentile"),
         default="minmax",
     )
+    analysis_parser = subparsers.add_parser(
+        "analyze-operators",
+        help="compare Static INT8 and compiled Static INT8 graph operators",
+    )
+    analysis_parser.add_argument(
+        "--static-path",
+        type=Path,
+        default=Path("artifacts/ecg_hybrid_net_exp12_resnet_medium-int8-static.onnx"),
+    )
+    analysis_parser.add_argument(
+        "--compiled-static-path",
+        type=Path,
+        default=Path("artifacts/ecg_hybrid_net_exp12_resnet_medium-ort-optimized-int8-static.onnx"),
+    )
+    analysis_parser.add_argument(
+        "--result-path",
+        type=Path,
+        default=Path("results/ecg-hybrid-net-static-int8-operator-analysis.json"),
+    )
     args = parser.parse_args()
 
     if args.command == "benchmark":
@@ -106,6 +126,13 @@ def main() -> None:
             "status": result["status"],
             "variants": result["variants"],
         }, indent=2))
+    elif args.command == "analyze-operators":
+        result = analyze_operator_interaction(
+            args.static_path,
+            args.compiled_static_path,
+            args.result_path,
+        )
+        print(json.dumps(result, indent=2))
     elif args.command == "checkpoint-baseline":
         result = run_checkpoint_baseline(CheckpointBaselineConfig(
             train_limit=args.train_limit,

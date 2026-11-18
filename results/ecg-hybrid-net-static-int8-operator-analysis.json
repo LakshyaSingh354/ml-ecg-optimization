@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "analysis": "static_int8_operator_interaction",
+  "artifacts": {
+    "static_int8": {
+      "path": "artifacts/ecg_hybrid_net_exp12_resnet_medium-int8-static.onnx",
+      "size_bytes": 3030613,
+      "sha256": "32360626f06e532daaddba8936484dafde94801527db17aaa776cfe1af427d64"
+    },
+    "compiled_static_int8": {
+      "path": "artifacts/ecg_hybrid_net_exp12_resnet_medium-ort-optimized-int8-static.onnx",
+      "size_bytes": 2937855,
+      "sha256": "211dc3b5122d8290cd9affb8c17480462a7c74541f3ae5ab667a2e266db3e925"
+    }
+  },
+  "definitions": {
+    "quantized_operator": "Operator type starts with QLinear or equals QGemm.",
+    "ort_domain_operator": "Node has domain com.microsoft; this is an observable ORT fused/custom-domain signal, not a universal fusion proof.",
+    "fp32_fallback_operator": "Non-quantized node in the declared compute-op whitelist.",
+    "quantization_boundary": "Graph edge whose producer and consumer categories differ among fp32, qdq, and quantized."
+  },
+  "static_int8": {
+    "node_count": 801,
+    "initializer_count": 288,
+    "operator_count": 24,
+    "operator_counts": {
+      "Add": 20,
+      "Cast": 12,
+      "Concat": 30,
+      "Constant": 156,
+      "Conv": 7,
+      "DequantizeLinear": 187,
+      "Div": 6,
+      "Flatten": 1,
+      "Gather": 24,
+      "Gemm": 4,
+      "GlobalAveragePool": 1,
+      "LayerNormalization": 6,
+      "MatMul": 15,
+      "Mod": 3,
+      "Mul": 12,
+      "QuantizeLinear": 135,
+      "Reshape": 33,
+      "Shape": 24,
+      "Slice": 12,
+      "Softmax": 3,
+      "Sqrt": 9,
+      "Squeeze": 6,
+      "Transpose": 26,
+      "Unsqueeze": 69
+    },
+    "domain_counts": {
+      "": 801
+    },
+    "quantize_linear_count": 135,
+    "dequantize_linear_count": 187,
+    "qdq_node_count": 322,
+    "quantized_operator_count": 0,
+    "quantized_operator_counts": {},
+    "ort_domain_node_count": 0,
+    "ort_domain_operator_counts": {},
+    "fp32_fallback_operator_count": 83,
+    "fp32_fallback_operator_counts": {
+      "Add": 20,
+      "Conv": 7,
+      "Div": 6,
+      "Gemm": 4,
+      "GlobalAveragePool": 1,
+      "LayerNormalization": 6,
+      "MatMul": 15,
+      "Mul": 12,
+      "Softmax": 3,
+      "Sqrt": 9
+    },
+    "quantization_boundary_count": 358,
+    "input_count": 1,
+    "output_count": 1
+  },
+  "compiled_static_int8": {
+    "node_count": 310,
+    "initializer_count": 267,
+    "operator_count": 23,
+    "operator_counts": {
+      "Cast": 3,
+      "Concat": 24,
+      "DequantizeLinear": 43,
+      "Div": 6,
+      "Flatten": 1,
+      "Gather": 24,
+      "LayerNormalization": 6,
+      "Mul": 6,
+      "QGemm": 4,
+      "QLinearAdd": 17,
+      "QLinearConv": 7,
+      "QLinearGlobalAveragePool": 1,
+      "QLinearMatMul": 15,
+      "QLinearMul": 6,
+      "QLinearSoftmax": 3,
+      "QuantizeLinear": 13,
+      "Reshape": 27,
+      "Shape": 24,
+      "Slice": 12,
+      "Sqrt": 6,
+      "Squeeze": 6,
+      "Transpose": 26,
+      "Unsqueeze": 30
+    },
+    "domain_counts": {
+      "": 279,
+      "com.microsoft": 31
+    },
+    "quantize_linear_count": 13,
+    "dequantize_linear_count": 43,
+    "qdq_node_count": 56,
+    "quantized_operator_count": 53,
+    "quantized_operator_counts": {
+      "QGemm": 4,
+      "QLinearAdd": 17,
+      "QLinearConv": 7,
+      "QLinearGlobalAveragePool": 1,
+      "QLinearMatMul": 15,
+      "QLinearMul": 6,
+      "QLinearSoftmax": 3
+    },
+    "ort_domain_node_count": 31,
+    "ort_domain_operator_counts": {
+      "QGemm": 4,
+      "QLinearAdd": 17,
+      "QLinearGlobalAveragePool": 1,
+      "QLinearMul": 6,
+      "QLinearSoftmax": 3
+    },
+    "fp32_fallback_operator_count": 24,
+    "fp32_fallback_operator_counts": {
+      "Div": 6,
+      "LayerNormalization": 6,
+      "Mul": 6,
+      "Sqrt": 6
+    },
+    "quantization_boundary_count": 136,
+    "input_count": 1,
+    "output_count": 1
+  },
+  "differences": {
+    "node_count_delta": -491,
+    "qdq_node_count_delta": -266,
+    "quantized_operator_count_delta": 53,
+    "fp32_fallback_operator_count_delta": -59,
+    "quantization_boundary_count_delta": -222,
+    "operator_types_removed": [
+      "Add",
+      "Constant",
+      "Conv",
+      "Gemm",
+      "GlobalAveragePool",
+      "MatMul",
+      "Mod",
+      "Softmax"
+    ],
+    "operator_types_introduced": [
+      "QGemm",
+      "QLinearAdd",
+      "QLinearConv",
+      "QLinearGlobalAveragePool",
+      "QLinearMatMul",
+      "QLinearMul",
+      "QLinearSoftmax"
+    ]
+  }
+}
