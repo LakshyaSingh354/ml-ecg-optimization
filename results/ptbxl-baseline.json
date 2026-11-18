@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "experiment": {
+    "name": "ptbxl-real-baseline",
+    "seed": 7,
+    "resolution": "lr",
+    "feature_points": 32
+  },
+  "dataset": {
+    "name": "PTB-XL",
+    "source": "https://physionet.org/files/ptb-xl/1.0.3",
+    "classes": [
+      "NORM",
+      "MI",
+      "STTC",
+      "CD",
+      "HYP"
+    ],
+    "folds": {
+      "train": "1-8",
+      "validation": "9",
+      "test": "10"
+    }
+  },
+  "splits": {
+    "train": 1000,
+    "validation": 200,
+    "test": 200
+  },
+  "metrics": {
+    "validation": {
+      "macro_auroc": 0.48965928712605206,
+      "macro_f1": 0.2731255773675835,
+      "samples": 200,
+      "positive_counts": [
+        102,
+        39,
+        59,
+        37,
+        25
+      ]
+    },
+    "test": {
+      "macro_auroc": 0.47780620859352807,
+      "macro_f1": 0.2328159267635584,
+      "samples": 200,
+      "positive_counts": [
+        114,
+        25,
+        44,
+        39,
+        18
+      ]
+    }
+  },
+  "artifact": {
+    "path": "artifacts/ptbxl-logistic-fp32.onnx",
+    "size_bytes": 26647,
+    "sha256": "1ff8c603690d7f4acb29d7ec6908fe9c871c79e340c8cc8b556079bda90fcf2e",
+    "size_kib": 26.0224609375
+  },
+  "checkpoint": {
+    "path": "artifacts/ptbxl-logistic.joblib",
+    "size_bytes": 21145,
+    "sha256": "0c0a6bba0bc102ff45333654d5e991b02ed237aba4ffef2e150f15ca02c27261",
+    "size_kib": 20.6494140625
+  },
+  "validation": {
+    "shape": [
+      200,
+      5
+    ],
+    "max_absolute_error": 1.9073486328125e-06,
+    "max_relative_error": 2.1956571469931934,
+    "allclose": true
+  },
+  "benchmark": {
+    "latency_seconds_p50": 0.00020708599913632497,
+    "latency_seconds_p95": 0.00022889899992151186,
+    "throughput_samples_per_second": 961338.1825316198
+  },
+  "environment": {
+    "python": "3.14.7",
+    "system": "Linux-7.2.4-arch1-2-x86_64-with-glibc2.44",
+    "processor": ""
+  },
+  "status": "real_baseline"
+}

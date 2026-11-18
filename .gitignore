@@ -10,7 +10,6 @@ data/
 data/raw/
 data/processed/
 artifacts/
-results/
 web/
 paper/figures/
 paper/tables/

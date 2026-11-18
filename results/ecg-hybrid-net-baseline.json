@@ -1,0 +1,141 @@
+{
+  "schema_version": 3,
+  "experiment": {
+    "name": "ecg-hybrid-net-exp12",
+    "checkpoint": "artifacts/ecg_hybrid_net_exp12_resnet_medium.pth",
+    "preprocessing": "global-training-scaler",
+    "resolution": "lr"
+  },
+  "dataset": {
+    "name": "PTB-XL",
+    "source": "https://physionet.org/files/ptb-xl/1.0.3",
+    "classes": [
+      "CD",
+      "HYP",
+      "MI",
+      "NORM",
+      "STTC"
+    ],
+    "folds": {
+      "train": "1-8",
+      "validation": "9",
+      "test": "10"
+    }
+  },
+  "splits": {
+    "train": 1000,
+    "validation": 200,
+    "test": 200
+  },
+  "metrics": {
+    "train": {
+      "macro_auroc": 0.9679705377048531,
+      "macro_f1": 0.7932091976335313,
+      "samples": 1000,
+      "positive_counts": [
+        210,
+        96,
+        131,
+        567,
+        212
+      ]
+    },
+    "validation": {
+      "macro_auroc": 0.948371504614484,
+      "macro_f1": 0.7848803855290559,
+      "samples": 200,
+      "positive_counts": [
+        37,
+        25,
+        39,
+        102,
+        59
+      ]
+    },
+    "test": {
+      "macro_auroc": 0.9240578459785475,
+      "macro_f1": 0.7333171720936225,
+      "samples": 200,
+      "positive_counts": [
+        39,
+        18,
+        25,
+        114,
+        44
+      ]
+    }
+  },
+  "artifact": {
+    "path": "artifacts/ecg_hybrid_net_exp12_resnet_medium-fp32.onnx",
+    "size_bytes": 11232163,
+    "sha256": "cf1fb212ee66bcaaafe220a128cf94c4853bb964bd05da4b928f1c3f09310bce",
+    "size_kib": 10968.9091796875
+  },
+  "validation": {
+    "shape": [
+      1,
+      5
+    ],
+    "max_absolute_error": 1.430511474609375e-06,
+    "max_relative_error": 2.549705716153374e-07,
+    "allclose": true
+  },
+  "benchmark": {
+    "pytorch_reference": {
+      "batch_size": 1,
+      "latency_seconds_p50": 0.034381080004095566,
+      "latency_seconds_p95": 0.06325313499837648,
+      "throughput_samples_per_second": 26.929444811701963,
+      "torch_threads": 10
+    },
+    "onnxruntime": {
+      "provider": "CPUExecutionProvider",
+      "threads": 1,
+      "optimization": "all",
+      "batch_sizes": [
+        1,
+        4,
+        8,
+        16
+      ],
+      "initialization_seconds": 0.121664767000766,
+      "session_init_rss_delta_bytes": 19046400,
+      "process_current_rss_bytes": 1121402880,
+      "process_peak_rss_bytes": 1120116736,
+      "batches": {
+        "1": {
+          "batch_size": 1,
+          "latency_seconds_p50": 0.0404033479935606,
+          "latency_seconds_p95": 0.05476988699956564,
+          "throughput_samples_per_second": 23.978673808502705
+        },
+        "4": {
+          "batch_size": 4,
+          "latency_seconds_p50": 0.16533020499628037,
+          "latency_seconds_p95": 0.17273786499572452,
+          "throughput_samples_per_second": 24.149181525425316
+        },
+        "8": {
+          "batch_size": 8,
+          "latency_seconds_p50": 0.3382101649985998,
+          "latency_seconds_p95": 0.35835458699875744,
+          "throughput_samples_per_second": 23.57545943298401
+        },
+        "16": {
+          "batch_size": 16,
+          "latency_seconds_p50": 0.6876991079989239,
+          "latency_seconds_p95": 0.8394440799966105,
+          "throughput_samples_per_second": 22.988480768074933
+        }
+      }
+    }
+  },
+  "environment": {
+    "python": "3.14.8",
+    "system": "Linux-7.2.11-arch1-1-x86_64-with-glibc2.44",
+    "processor": "",
+    "cpu_count": 12,
+    "onnxruntime": "CPUExecutionProvider"
+  },
+  "status": "real_checkpoint_baseline"
+}

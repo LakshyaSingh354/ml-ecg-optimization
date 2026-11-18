@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "experiment": {
+    "name": "synthetic-smoke",
+    "seed": 7,
+    "samples": 32,
+    "warmup": 3,
+    "iterations": 20,
+    "input_shape": [
+      12,
+      128
+    ],
+    "output_labels": 4,
+    "model_name": "synthetic-linear",
+    "optimization": "fp32",
+    "provider": "reference-python",
+    "threads": 1,
+    "output_path": "results/synthetic-smoke.json"
+  },
+  "dataset": {
+    "name": "synthetic-fixture",
+    "samples": 32
+  },
+  "metrics": {
+    "latency_seconds_p50": 0.000932696999370819,
+    "latency_seconds_p95": 0.001082855997083243,
+    "throughput_samples_per_second": 33844.34058102722
+  },
+  "artifact": null,
+  "validation": null,
+  "environment": {
+    "python": "3.14.7",
+    "system": "Linux-7.2.4-arch1-2-x86_64-with-glibc2.44",
+    "processor": ""
+  },
+  "status": "synthetic_smoke_only",
+  "prediction_shape": [
+    32,
+    4
+  ]
+}
