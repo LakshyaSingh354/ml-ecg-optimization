@@ -9,13 +9,14 @@ Provides-Extra: benchmark
 Requires-Dist: numpy>=1.26; extra == "benchmark"
 Requires-Dist: onnx>=1.16; extra == "benchmark"
 Requires-Dist: onnxruntime>=1.18; extra == "benchmark"
-Requires-Dist: onnxscript>=0.1.0; extra == "benchmark"
 Requires-Dist: scikit-learn>=1.4; extra == "benchmark"
 Requires-Dist: wfdb>=4.1; extra == "benchmark"
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
+Provides-Extra: paper
+Requires-Dist: matplotlib>=3.8; extra == "paper"
 
-# Edge AI Bench
+# ML Optimization Bench
 
 Research harness for measuring the tradeoffs between model accuracy, artifact size,
 latency, and memory when deploying medical AI models on CPU devices.
@@ -73,6 +74,105 @@ Run tests:
 python -m pytest
 ```
 
+The checkpoint benchmark evaluates the FP32 artifact through both PyTorch (reference)
+and ONNX Runtime (deployment) paths. The ONNX Runtime result records initialization
+time, provider, graph optimization level, thread count, peak RSS measurements, and
+latency/throughput for batch sizes 1, 4, 8, and 16. Override runtime settings when
+comparing configurations:
+
+```bash
+edge-ai-bench checkpoint-baseline --onnx-threads 4 --onnx-optimization all
+```
+
+Run the FP32 runtime sweep across graph optimization levels and thread counts:
+
+```bash
+edge-ai-bench checkpoint-sweep --threads 1 2 4 8
+```
+
+The sweep writes `results/ecg-hybrid-net-fp32-sweep.json` and uses the same fixed
+PTB-XL train/test selection and preprocessing as the checkpoint baseline.
+
+Generate compiler and quantization variants:
+
+```bash
+edge-ai-bench optimize-checkpoint --threads 2 --calibration-limit 100
+```
+
+The default is the fast 1,000-train/200-test engineering subset. For the complete
+PTB-XL labeled split, use approximately 4,200 training records and 677 test
+records; missing waveform files are downloaded into the ignored data directory:
+
+```bash
+edge-ai-bench optimize-checkpoint \
+  --threads 2 \
+  --train-limit 4200 \
+  --test-limit 677 \
+  --calibration-limit 500 \
+  --isolated-repeats 3
+```
+
+This writes `results/ecg-hybrid-net-optimizations.json` and evaluates five explicit
+conditions:
+
+1. **Baseline**: original FP32 graph with ONNX Runtime graph optimization disabled.
+2. **Compiler only**: serialized `ORT_ENABLE_EXTENDED` FP32 graph with runtime
+   optimization disabled at load time.
+3. **Quantization only**: dynamic and static INT8 artifacts generated from the
+   original FP32 graph, loaded without runtime graph optimization.
+4. **Compiler plus quantization**: original graph is quantized first, then each
+   INT8 artifact is serialized through `ORT_ENABLE_EXTENDED`, and loaded without
+   runtime graph optimization.
+5. **Default runtime optimization**: the original FP32 graph, both INT8 graphs, and
+   compiled static INT8 are reloaded at ORT's default graph optimization level
+   (`ORT_ENABLE_ALL`) so the static-versus-compiled interaction can be remeasured.
+
+Every variant is evaluated on the fixed PTB-XL test selection with artifact size,
+macro AUROC/F1 (plus row-bootstrap 95% CIs), output error, isolated subprocess
+initialization time, RSS, batch scaling (1/4/8/16), a thread sweep over
+`intra_op_num_threads` in {1, 2, 4}, and throughput. The result records CPU model
+and ONNX Runtime version from each timed subprocess, non-dominated Pareto sets for
+multiple deployment priorities, a static-INT8 interaction summary, and ORT built-in
+per-node profiles for static INT8 (disabled, compiled, and default runtime arms).
+The static quantization result is a systems measurement, not clinical validation;
+calibration identity and the fixed test split must remain unchanged when comparing
+future variants.
+
+The reported current RSS and peak RSS values are process-level measurements. The
+initialization RSS delta is sampled around ONNX Runtime session creation, while
+`resource.getrusage` peak RSS is cumulative for the process; compare runs on the
+same host and do not interpret either value as isolated tensor allocation size.
+Optimization runs now additionally launch a fresh subprocess for every timing
+repeat, using memory-mapped test signals. Each variant records per-process current
+RSS, peak RSS, initialization time, and raw latency/throughput measurements; the
+memory summary reports median and maximum peak RSS across those processes.
+
+Quantization sensitivity variants can be selected without changing the dataset or
+benchmark protocol:
+
+```bash
+# Per-tensor weights with percentile calibration
+edge-ai-bench optimize-checkpoint \
+  --per-tensor \
+  --calibration-method percentile
+
+# Compare a candidate calibration method against a saved minmax manifest
+edge-ai-bench optimize-checkpoint \
+  --calibration-method entropy \
+  --reference-manifest results/ecg-hybrid-net-optimizations.json \
+  --result-path results/ecg-hybrid-net-quant-entropy.json
+
+edge-ai-bench compare-calibration \
+  --reference results/ecg-hybrid-net-optimizations.json \
+  --candidate results/ecg-hybrid-net-quant-pertensor-percentile.json
+```
+
+The default is per-channel weight quantization with MinMax calibration (`minmax`,
+`percentile`, or `entropy`). Manifests record the method, bootstrap settings, and
+calibration-record SHA-256 so variants remain directly comparable.
+Use `--result-path` when running exploratory variants to preserve earlier manifests.
+Pass `--no-profile` to skip ORT node profiling when iterating on quantization only.
+
 ## Research protocol
 
 The planned real-data comparison is FP32 versus ONNX Runtime graph optimization,
@@ -84,3 +184,7 @@ recorded in each experiment manifest.
 
 This is an engineering study, not clinical validation. Accuracy changes must be
 interpreted with the dataset's limitations and the model's intended-use context.
+
+Paper tables and figures can be regenerated with
+`python paper/generate_assets.py`; see [paper/README.md](paper/README.md).
+The frozen paper manifest is in [paper/manifest-lock.json](paper/manifest-lock.json).

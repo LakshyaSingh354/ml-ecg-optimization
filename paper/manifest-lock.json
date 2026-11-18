@@ -1,15 +1,19 @@
 {
-  "manifest": "../results/ecg-hybrid-net-final-repeat5-pertensor-minmax.json",
-  "sha256": "60b287cea9af4c31f5fc1427f0308e0295b8b57d5a65ac8ad86f3eb63c0c1ecd",
+  "manifest": "../results/ecg-hybrid-net-final-repeat5-pertensor-minmax-statistical.json",
+  "sha256": "4b5c334da29cf920e89e3344469c05182637341caab63d6fdde74c5eb7d29316",
   "protocol": {
+    "schema_version": 2,
     "dataset": "PTB-XL",
     "selected_test_records": 2050,
     "threads": 2,
+    "thread_counts": [1, 2, 4],
     "calibration_samples": 100,
     "calibration_method": "minmax",
     "weight_quantization": "per-tensor",
     "isolated_repeats": 5,
-    "batch_sizes": [1, 4, 8, 16]
+    "timed_iterations_per_subprocess": 10,
+    "batch_sizes": [1, 4, 8, 16],
+    "bootstrap_resamples": 1000
   },
   "variants": [
     "fp32",
@@ -17,6 +21,10 @@
     "int8_dynamic",
     "int8_static",
     "int8_dynamic_compiled",
-    "int8_static_compiled"
+    "int8_static_compiled",
+    "fp32_default",
+    "int8_dynamic_default",
+    "int8_static_default",
+    "int8_static_compiled_default"
   ]
 }

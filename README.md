@@ -86,6 +86,9 @@ PTB-XL labeled split, use approximately 4,200 training records and 677 test
 records; missing waveform files are downloaded into the ignored data directory:
 
 ```bash
+edge-ai-bench optimize-checkpoint --paper-protocol
+
+# Or set limits explicitly for a partial engineering run:
 edge-ai-bench optimize-checkpoint \
   --threads 2 \
   --train-limit 4200 \
@@ -94,7 +97,7 @@ edge-ai-bench optimize-checkpoint \
   --isolated-repeats 3
 ```
 
-This writes `results/ecg-hybrid-net-optimizations.json` and evaluates four explicit
+This writes `results/ecg-hybrid-net-optimizations.json` and evaluates five explicit
 conditions:
 
 1. **Baseline**: original FP32 graph with ONNX Runtime graph optimization disabled.
@@ -105,12 +108,17 @@ conditions:
 4. **Compiler plus quantization**: original graph is quantized first, then each
    INT8 artifact is serialized through `ORT_ENABLE_EXTENDED`, and loaded without
    runtime graph optimization.
+5. **Default runtime optimization**: the original FP32 graph, both INT8 graphs, and
+   compiled static INT8 are reloaded at ORT's default graph optimization level
+   (`ORT_ENABLE_ALL`) so the static-versus-compiled interaction can be remeasured.
 
 Every variant is evaluated on the fixed PTB-XL test selection with artifact size,
-macro AUROC/F1, output error, initialization time, RSS, latency, and throughput.
-The optimization result also records per-class AUROC/F1, the exact calibration
-record IDs and their SHA-256 identity, three repeated timing runs, and the
-non-dominated Pareto variants for artifact size, batch-1 latency, and macro F1.
+macro AUROC/F1 (plus row-bootstrap 95% CIs), output error, isolated subprocess
+initialization time, RSS, batch scaling (1/4/8/16), a thread sweep over
+`intra_op_num_threads` in {1, 2, 4}, and throughput. The result records CPU model
+and ONNX Runtime version from each timed subprocess, non-dominated Pareto sets for
+multiple deployment priorities, a static-INT8 interaction summary, and ORT built-in
+per-node profiles for static INT8 (disabled, compiled, and default runtime arms).
 The static quantization result is a systems measurement, not clinical validation;
 calibration identity and the fixed test split must remain unchanged when comparing
 future variants.
@@ -132,11 +140,23 @@ benchmark protocol:
 edge-ai-bench optimize-checkpoint \
   --per-tensor \
   --calibration-method percentile
+
+# Compare a candidate calibration method against a saved minmax manifest
+edge-ai-bench optimize-checkpoint \
+  --calibration-method entropy \
+  --reference-manifest results/ecg-hybrid-net-optimizations.json \
+  --result-path results/ecg-hybrid-net-quant-entropy.json
+
+edge-ai-bench compare-calibration \
+  --reference results/ecg-hybrid-net-optimizations.json \
+  --candidate results/ecg-hybrid-net-quant-pertensor-percentile.json
 ```
 
-The default is per-channel weight quantization with MinMax calibration. The result
-manifest records both settings so variants remain directly comparable.
+The default is per-channel weight quantization with MinMax calibration (`minmax`,
+`percentile`, or `entropy`). Manifests record the method, bootstrap settings, and
+calibration-record SHA-256 so variants remain directly comparable.
 Use `--result-path` when running exploratory variants to preserve earlier manifests.
+Pass `--no-profile` to skip ORT node profiling when iterating on quantization only.
 
 ## Research protocol
 

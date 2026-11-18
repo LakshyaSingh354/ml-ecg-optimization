@@ -13,6 +13,7 @@ artifacts/
 web/
 paper/figures/
 paper/tables/
+paper/operator-analysis.md
 paper/main.*
 paper/*.bib
 paper/research-framing.md

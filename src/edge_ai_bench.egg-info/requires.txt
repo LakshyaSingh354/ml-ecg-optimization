@@ -4,9 +4,11 @@ torch>=2.5
 numpy>=1.26
 onnx>=1.16
 onnxruntime>=1.18
-onnxscript>=0.1.0
 scikit-learn>=1.4
 wfdb>=4.1
 
 [dev]
 pytest>=8.0
+
+[paper]
+matplotlib>=3.8

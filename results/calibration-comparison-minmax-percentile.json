@@ -1,0 +1,91 @@
+{
+  "reference_method": "minmax",
+  "candidate_method": "percentile",
+  "reference_calibration_samples": 100,
+  "candidate_calibration_samples": 100,
+  "same_calibration_records": true,
+  "calibration_record_ids_sha256": "9c736698e5a91a8002b9684f4811b25913cfed0336d00f481f3be36743c05674",
+  "same_test_records": true,
+  "selected_test_records": 2050,
+  "weight_quantization_matches": true,
+  "variants": [
+    {
+      "variant": "fp32",
+      "reference_auroc": 0.9259112582498545,
+      "candidate_auroc": 0.9259112582498545,
+      "delta_auroc": 0.0,
+      "reference_auroc_ci95": null,
+      "candidate_auroc_ci95": null,
+      "reference_f1": 0.735502897669744,
+      "candidate_f1": 0.735502897669744,
+      "delta_f1": 0.0,
+      "reference_f1_ci95": null,
+      "candidate_f1_ci95": null
+    },
+    {
+      "variant": "fp32_compiled",
+      "reference_auroc": 0.9259112582498545,
+      "candidate_auroc": 0.9259112582498545,
+      "delta_auroc": 0.0,
+      "reference_auroc_ci95": null,
+      "candidate_auroc_ci95": null,
+      "reference_f1": 0.735502897669744,
+      "candidate_f1": 0.735502897669744,
+      "delta_f1": 0.0,
+      "reference_f1_ci95": null,
+      "candidate_f1_ci95": null
+    },
+    {
+      "variant": "int8_dynamic",
+      "reference_auroc": 0.9260611749590446,
+      "candidate_auroc": 0.9260611749590446,
+      "delta_auroc": 0.0,
+      "reference_auroc_ci95": null,
+      "candidate_auroc_ci95": null,
+      "reference_f1": 0.7355193129602663,
+      "candidate_f1": 0.7355193129602663,
+      "delta_f1": 0.0,
+      "reference_f1_ci95": null,
+      "candidate_f1_ci95": null
+    },
+    {
+      "variant": "int8_static",
+      "reference_auroc": 0.9261299332312518,
+      "candidate_auroc": 0.9261211025266821,
+      "delta_auroc": -8.830704569695591e-06,
+      "reference_auroc_ci95": null,
+      "candidate_auroc_ci95": null,
+      "reference_f1": 0.7350635638354369,
+      "candidate_f1": 0.7343359925099605,
+      "delta_f1": -0.000727571325476406,
+      "reference_f1_ci95": null,
+      "candidate_f1_ci95": null
+    },
+    {
+      "variant": "int8_dynamic_compiled",
+      "reference_auroc": 0.926058415776177,
+      "candidate_auroc": 0.926058415776177,
+      "delta_auroc": 0.0,
+      "reference_auroc_ci95": null,
+      "candidate_auroc_ci95": null,
+      "reference_f1": 0.7355193129602663,
+      "candidate_f1": 0.7355193129602663,
+      "delta_f1": 0.0,
+      "reference_f1_ci95": null,
+      "candidate_f1_ci95": null
+    },
+    {
+      "variant": "int8_static_compiled",
+      "reference_auroc": 0.9261433907792928,
+      "candidate_auroc": 0.9261328564179397,
+      "delta_auroc": -1.0534361353009558e-05,
+      "reference_auroc_ci95": null,
+      "candidate_auroc_ci95": null,
+      "reference_f1": 0.7352286011031094,
+      "candidate_f1": 0.7340238322102848,
+      "delta_f1": -0.0012047688928246147,
+      "reference_f1_ci95": null,
+      "candidate_f1_ci95": null
+    }
+  ]
+}

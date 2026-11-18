@@ -23,9 +23,15 @@ from .checkpoint_baseline import (
     _metrics,
     _select,
 )
-from .onnx_runtime import OnnxRuntimeConfig, OnnxRuntimeSession
+from .isolated_benchmark import _system_metadata
+from .calibration import compare_calibration_manifests
+from .metrics import bootstrap_macro_intervals
+from .onnx_runtime import ORT_DEFAULT_OPTIMIZATION, OnnxRuntimeConfig, OnnxRuntimeSession
+from .pareto import nondominated_names
+from .profiler import demonstrate_static_int8_mechanism, profile_model
 from .ptbxl import load_metadata, load_statement_map
 from .real_baseline import PTBXL_URL
+from .reporting import static_int8_interaction
 
 
 @dataclass(frozen=True)
@@ -45,12 +51,18 @@ class OptimizationConfig:
     iterations: int = 10
     download_workers: int = 16
     threads: int = 2
+    thread_counts: tuple[int, ...] = (1, 2, 4)
     batch_sizes: tuple[int, ...] = (1, 4, 8, 16)
     repeats: int = 3
     evaluation_batch_size: int = 64
     isolated_repeats: int = 3
     quantization_per_channel: bool = True
     calibration_method: str = "minmax"
+    bootstrap_resamples: int = 1000
+    bootstrap_seed: int = 0
+    profile_nodes: bool = True
+    profile_iterations: int = 5
+    reference_manifest: Path | None = None
 
     def __post_init__(self) -> None:
         if min(self.train_limit, self.test_limit, self.calibration_limit, self.iterations, self.repeats) <= 0:
@@ -61,8 +73,14 @@ class OptimizationConfig:
             raise ValueError("evaluation_batch_size must be positive")
         if self.isolated_repeats <= 0:
             raise ValueError("isolated_repeats must be positive")
-        if self.calibration_method not in {"minmax", "percentile"}:
-            raise ValueError("calibration_method must be minmax or percentile")
+        if not self.thread_counts or any(count <= 0 for count in self.thread_counts):
+            raise ValueError("thread_counts must be positive")
+        if self.bootstrap_resamples <= 0:
+            raise ValueError("bootstrap_resamples must be positive")
+        if self.profile_iterations <= 0:
+            raise ValueError("profile_iterations must be positive")
+        if self.calibration_method not in {"minmax", "percentile", "entropy"}:
+            raise ValueError("calibration_method must be minmax, percentile, or entropy")
 
 
 class _CalibrationReader:
@@ -162,6 +180,7 @@ def _quantize(
         calibrate_method={
             "minmax": CalibrationMethod.MinMax,
             "percentile": CalibrationMethod.Percentile,
+            "entropy": CalibrationMethod.Entropy,
         }[calibration_method],
         extra_options={"DefaultTensorType": "float32"},
     )
@@ -188,22 +207,28 @@ def _evaluate_artifact(
     logits = _predict_onnx_in_chunks(session, test, config.evaluation_batch_size)
     probabilities = 1.0 / (1.0 + np.exp(-logits))
     comparison = compare_outputs(reference_logits, logits, atol=1e-1, rtol=1e-1)
-    benchmark_runs = _isolated_benchmarks(path, signals_path, config)
-    batches = {}
-    for batch_size in config.batch_sizes:
-        measurements = [run["batches"][str(batch_size)] for run in benchmark_runs]
-        batches[str(batch_size)] = {
-            "batch_size": batch_size,
-            "repeats": config.repeats,
-            "latency_seconds_p50": float(np.median([item["latency_seconds_p50"] for item in measurements])),
-            "latency_seconds_p95": float(np.median([item["latency_seconds_p95"] for item in measurements])),
-            "throughput_samples_per_second": float(np.median([item["throughput_samples_per_second"] for item in measurements])),
-            "runs": measurements,
-        }
+    primary_runs = _isolated_benchmarks(path, signals_path, config, config.threads, runtime_optimization)
+    thread_sweep = []
+    for thread_count in config.thread_counts:
+        if thread_count == config.threads:
+            runs = primary_runs
+        else:
+            runs = _isolated_benchmarks(path, signals_path, config, thread_count, runtime_optimization)
+        thread_sweep.append(_thread_sweep_point(thread_count, runs, config))
+    metrics = _metrics(probabilities, labels)
+    intervals = bootstrap_macro_intervals(
+        probabilities,
+        labels,
+        resamples=config.bootstrap_resamples,
+        seed=config.bootstrap_seed,
+    )
+    metrics["bootstrap"] = intervals
+    metrics["macro_auroc_ci95"] = intervals["macro_auroc_ci95"]
+    metrics["macro_f1_ci95"] = intervals["macro_f1_ci95"]
     return {
         "name": name,
         "artifact": artifact.as_dict(),
-        "metrics": _metrics(probabilities, labels),
+        "metrics": metrics,
         "calibration_hash": calibration_hash,
         "output_validation": {
             "shape": comparison.shape,
@@ -211,42 +236,146 @@ def _evaluate_artifact(
             "max_relative_error": comparison.max_relative_error,
             "allclose_at_1e-1": comparison.allclose,
         },
-        "benchmark": {
-            "provider": session.provider,
-            "threads": session.threads,
-            "optimization": session.optimization,
-            "initialization_seconds": initialization_seconds,
-            "process_current_rss_bytes": _current_rss_bytes(),
-            "measurement_mode": "fresh_subprocess_per_repeat",
-            "isolated_repeats": config.isolated_repeats,
-            "isolated_runs": benchmark_runs,
-            "isolated_memory": {
-                "current_rss_bytes_median": int(np.median([run["current_rss_bytes"] for run in benchmark_runs])),
-                "peak_rss_bytes_median": int(np.median([run["peak_rss_bytes"] for run in benchmark_runs])),
-                "peak_rss_bytes_max": max(run["peak_rss_bytes"] for run in benchmark_runs),
-            },
-            "batches": batches,
-        },
+        "benchmark": _benchmark_record(
+            session,
+            initialization_seconds,
+            primary_runs,
+            config,
+            runtime_optimization,
+            thread_sweep,
+        ),
     }
+
+
+def _aggregate_batches(benchmark_runs: list[dict[str, Any]], config: OptimizationConfig) -> dict[str, Any]:
+    batches = {}
+    for batch_size in config.batch_sizes:
+        measurements = [run["batches"][str(batch_size)] for run in benchmark_runs]
+        subprocess_p50 = np.asarray(
+            [item["latency_seconds_p50"] for item in measurements],
+            dtype=np.float64,
+        )
+        subprocess_p50_mean = float(np.mean(subprocess_p50))
+        subprocess_p50_std = float(np.std(subprocess_p50, ddof=1)) if len(subprocess_p50) > 1 else 0.0
+        confidence_half_width = _confidence_half_width(subprocess_p50_std, len(subprocess_p50))
+        batches[str(batch_size)] = {
+            "batch_size": batch_size,
+            "repeats": config.repeats,
+            "latency_seconds_p50": float(np.median([item["latency_seconds_p50"] for item in measurements])),
+            "latency_seconds_p95": float(np.median([item["latency_seconds_p95"] for item in measurements])),
+            "throughput_samples_per_second": float(np.median([item["throughput_samples_per_second"] for item in measurements])),
+            "subprocess_p50_mean_seconds": subprocess_p50_mean,
+            "subprocess_p50_std_seconds": subprocess_p50_std,
+            "subprocess_p50_ci95_seconds": [
+                subprocess_p50_mean - confidence_half_width,
+                subprocess_p50_mean + confidence_half_width,
+            ],
+            "runs": measurements,
+        }
+    return batches
+
+
+def _thread_sweep_point(
+    thread_count: int,
+    benchmark_runs: list[dict[str, Any]],
+    config: OptimizationConfig,
+) -> dict[str, Any]:
+    return {
+        "threads": thread_count,
+        "thread_axis": "intra_op_num_threads",
+        "initialization_seconds_median": float(np.median([
+            run["initialization_seconds"] for run in benchmark_runs
+        ])),
+        "current_rss_bytes_median": int(np.median([run["current_rss_bytes"] for run in benchmark_runs])),
+        "peak_rss_bytes_median": int(np.median([run["peak_rss_bytes"] for run in benchmark_runs])),
+        "peak_rss_bytes_max": max(run["peak_rss_bytes"] for run in benchmark_runs),
+        "batches": _aggregate_batches(benchmark_runs, config),
+    }
+
+
+def _benchmark_record(
+    session: OnnxRuntimeSession,
+    initialization_seconds: float,
+    benchmark_runs: list[dict[str, Any]],
+    config: OptimizationConfig,
+    runtime_optimization: str,
+    thread_sweep: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "provider": session.provider,
+        "threads": session.threads,
+        "thread_axis": "intra_op_num_threads",
+        "optimization": session.optimization,
+        "ort_default_optimization": runtime_optimization == ORT_DEFAULT_OPTIMIZATION,
+        "initialization_seconds": initialization_seconds,
+        "initialization_seconds_isolated_median": float(np.median([
+            run["initialization_seconds"] for run in benchmark_runs
+        ])),
+        "process_current_rss_bytes": _current_rss_bytes(),
+        "measurement_mode": "fresh_subprocess_per_repeat",
+        "isolated_repeats": config.isolated_repeats,
+        "isolated_runs": benchmark_runs,
+        "system": benchmark_runs[0]["system"],
+        "isolated_memory": {
+            "current_rss_bytes_median": int(np.median([run["current_rss_bytes"] for run in benchmark_runs])),
+            "peak_rss_bytes_median": int(np.median([run["peak_rss_bytes"] for run in benchmark_runs])),
+            "peak_rss_bytes_max": max(run["peak_rss_bytes"] for run in benchmark_runs),
+        },
+        "batches": _aggregate_batches(benchmark_runs, config),
+        "thread_sweep": thread_sweep,
+    }
+
+
+_T_CRITICAL_95 = {
+    1: 12.706,
+    2: 4.303,
+    3: 3.182,
+    4: 2.776,
+    5: 2.571,
+    6: 2.447,
+    7: 2.365,
+    8: 2.306,
+    9: 2.262,
+    10: 2.228,
+}
+
+
+def _confidence_half_width(sample_std: float, sample_count: int) -> float:
+    if sample_count <= 1:
+        return 0.0
+    critical = _T_CRITICAL_95.get(sample_count - 1, 1.96)
+    return critical * sample_std / np.sqrt(sample_count)
+
+
+def _isolated_benchmark_command(
+    artifact: Path,
+    signals_path: Path,
+    threads: int,
+    optimization: str,
+    config: OptimizationConfig,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "edge_ai_bench.isolated_benchmark",
+        "--artifact", str(artifact),
+        "--signals", str(signals_path),
+        "--threads", str(threads),
+        "--optimization", optimization,
+        "--warmup", str(config.warmup),
+        "--iterations", str(config.iterations),
+        "--batch-sizes", *(str(size) for size in config.batch_sizes),
+    ]
 
 
 def _isolated_benchmarks(
     artifact: Path,
     signals_path: Path,
     config: OptimizationConfig,
+    threads: int,
+    optimization: str,
 ) -> list[dict[str, Any]]:
-    command = [
-        sys.executable,
-        "-m",
-        "edge_ai_bench.isolated_benchmark",
-        "--artifact", str(artifact),
-        "--signals", str(signals_path),
-        "--threads", str(config.threads),
-        "--optimization", "disabled",
-        "--warmup", str(config.warmup),
-        "--iterations", str(config.iterations),
-        "--batch-sizes", *(str(size) for size in config.batch_sizes),
-    ]
+    command = _isolated_benchmark_command(artifact, signals_path, threads, optimization, config)
     return [
         json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
         for _ in range(config.isolated_repeats)
@@ -262,8 +391,108 @@ def _predict_onnx_in_chunks(session: OnnxRuntimeSession, signals: np.ndarray, ba
     return np.concatenate(outputs, axis=0)
 
 
+def deployment_conditions(config: OptimizationConfig) -> list[dict[str, Any]]:
+    """Four disabled-runtime conditions plus ORT's default optimization level.
+
+    The default arms reload the original FP32 graph, both INT8 graphs, and the
+    compiled static INT8 graph at ORT_ENABLE_ALL. Static INT8 is included so the
+    compiled-versus-uncompiled gap can be remeasured at the runtime default.
+    """
+    disabled = "disabled"
+    return [
+        {
+            "name": "baseline",
+            "description": "Original FP32 graph with ORT graph optimization disabled",
+            "runtime_optimization": disabled,
+            "variants": [("fp32", config.input_path)],
+        },
+        {
+            "name": "compiler_only",
+            "description": "Serialized ORT-optimized FP32 graph with runtime optimization disabled",
+            "runtime_optimization": disabled,
+            "variants": [("fp32_compiled", config.optimized_path)],
+        },
+        {
+            "name": "quantization_only",
+            "description": "INT8 graphs quantized from the original FP32 graph",
+            "runtime_optimization": disabled,
+            "variants": [
+                ("int8_dynamic", config.dynamic_path),
+                ("int8_static", config.static_path),
+            ],
+        },
+        {
+            "name": "compiler_plus_quantization",
+            "description": "INT8 graphs quantized from the original graph, then serialized with ORT_ENABLE_EXTENDED",
+            "runtime_optimization": disabled,
+            "variants": [
+                ("int8_dynamic_compiled", config.optimized_dynamic_path),
+                ("int8_static_compiled", config.optimized_static_path),
+            ],
+        },
+        {
+            "name": "default_runtime_optimization",
+            "description": "FP32 and INT8 graphs loaded at ORT's default graph optimization level (ORT_ENABLE_ALL)",
+            "runtime_optimization": ORT_DEFAULT_OPTIMIZATION,
+            "variants": [
+                ("fp32_default", config.input_path),
+                ("int8_dynamic_default", config.dynamic_path),
+                ("int8_static_default", config.static_path),
+                ("int8_static_compiled_default", config.optimized_static_path),
+            ],
+        },
+    ]
+
+
+def _profile_static_interaction(
+    config: OptimizationConfig,
+    test: np.ndarray,
+) -> dict[str, Any]:
+    sample = np.ascontiguousarray(test[:1]).transpose(0, 2, 1)
+    profiles = {
+        "int8_static_disabled": profile_model(
+            config.static_path,
+            sample,
+            threads=config.threads,
+            optimization="disabled",
+            iterations=config.profile_iterations,
+        ),
+        "int8_static_compiled_disabled": profile_model(
+            config.optimized_static_path,
+            sample,
+            threads=config.threads,
+            optimization="disabled",
+            iterations=config.profile_iterations,
+        ),
+        "int8_static_default": profile_model(
+            config.static_path,
+            sample,
+            threads=config.threads,
+            optimization=ORT_DEFAULT_OPTIMIZATION,
+            iterations=config.profile_iterations,
+        ),
+    }
+    return {
+        "profiles": profiles,
+        "mechanism": demonstrate_static_int8_mechanism(profiles),
+    }
+
+
+def _environment() -> dict[str, Any]:
+    system = _system_metadata()
+    cpu = system.get("lscpu") or {}
+    return {
+        "python": platform.python_version(),
+        "system": platform.platform(),
+        "cpu_count": os.cpu_count(),
+        "cpu_model": cpu.get("Model name"),
+        "onnxruntime_version": system.get("onnxruntime_version"),
+        "runtime": system,
+    }
+
+
 def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
-    """Evaluate four isolated compiler and quantization experiment conditions."""
+    """Evaluate compiler, quantization, and ORT-default optimization conditions."""
     calibration, test, labels, selected_train_records, calibration_ids, calibration_hash = _load_data(config)
     reference_session = OnnxRuntimeSession(
         config.input_path,
@@ -288,38 +517,14 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
     signals_directory = tempfile.TemporaryDirectory(prefix="edge-ai-benchmark-")
     signals_path = Path(signals_directory.name) / "test-signals.npy"
     np.save(signals_path, test)
-    experiments = [
-        {
-            "name": "baseline",
-            "description": "Original FP32 graph with ORT graph optimization disabled",
-            "variants": [("fp32", config.input_path)],
-        },
-        {
-            "name": "compiler_only",
-            "description": "Serialized ORT-optimized FP32 graph with runtime optimization disabled",
-            "variants": [("fp32_compiled", config.optimized_path)],
-        },
-        {
-            "name": "quantization_only",
-            "description": "INT8 graphs quantized from the original FP32 graph",
-            "variants": [
-                ("int8_dynamic", config.dynamic_path),
-                ("int8_static", config.static_path),
-            ],
-        },
-        {
-            "name": "compiler_plus_quantization",
-            "description": "INT8 graphs quantized from the serialized ORT-optimized graph",
-            "variants": [
-                ("int8_dynamic_compiled", config.optimized_dynamic_path),
-                ("int8_static_compiled", config.optimized_static_path),
-            ],
-        },
-    ]
+    experiments = deployment_conditions(config)
     evaluated_experiments = []
     for experiment in experiments:
+        runtime_optimization = experiment["runtime_optimization"]
         evaluated_experiments.append({
-            **experiment,
+            "name": experiment["name"],
+            "description": experiment["description"],
+            "runtime_optimization": runtime_optimization,
             "variants": [
                 _evaluate_artifact(
                     variant_name,
@@ -330,15 +535,17 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
                     config,
                     calibration_hash,
                     signals_path,
+                    runtime_optimization,
                 )
                 for variant_name, variant_path in experiment["variants"]
             ],
         })
     variants = [variant for experiment in evaluated_experiments for variant in experiment["variants"]]
+    node_profiles = _profile_static_interaction(config, test) if config.profile_nodes else None
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment": {
-            "name": "ecg-hybrid-net-exp12-four-condition-optimization",
+            "name": "ecg-hybrid-net-exp12-optimization",
             "dataset": "PTB-XL",
             "source": PTBXL_URL,
             "train_samples": config.train_limit,
@@ -350,27 +557,33 @@ def run_optimizations(config: OptimizationConfig) -> dict[str, Any]:
             "calibration_record_ids": calibration_ids,
             "calibration_record_ids_sha256": calibration_hash,
             "threads": config.threads,
+            "thread_counts": list(config.thread_counts),
+            "thread_axis": "intra_op_num_threads",
             "batch_sizes": list(config.batch_sizes),
             "runtime_optimization": "disabled",
+            "ort_default_optimization": "ORT_ENABLE_ALL",
             "compiler_optimization": "ORT_ENABLE_EXTENDED",
             "combined_order": "quantize original graph, then serialize optimized INT8 graph",
             "evaluation_batch_size": config.evaluation_batch_size,
             "isolated_repeats": config.isolated_repeats,
             "quantization_per_channel": config.quantization_per_channel,
             "calibration_method": config.calibration_method,
+            "bootstrap_resamples": config.bootstrap_resamples,
+            "bootstrap_seed": config.bootstrap_seed,
             "conditions": [experiment["name"] for experiment in experiments],
         },
-        "environment": {
-            "python": platform.python_version(),
-            "system": platform.platform(),
-            "cpu_count": os.cpu_count(),
-        },
+        "environment": _environment(),
         "experiments": evaluated_experiments,
         "variants": variants,
         "pareto_frontier": _pareto_frontier(variants),
         "pareto_frontiers": _pareto_frontiers(variants),
+        "static_int8_interaction": static_int8_interaction(variants),
+        "node_profiles": node_profiles,
         "status": "compiler_quantization_experiment",
     }
+    if config.reference_manifest is not None:
+        reference = json.loads(config.reference_manifest.read_text(encoding="utf-8"))
+        result["calibration_comparison"] = compare_calibration_manifests(reference, result)
     config.result_path.parent.mkdir(parents=True, exist_ok=True)
     config.result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     signals_directory.cleanup()
@@ -427,6 +640,28 @@ def _pareto_frontiers(variants: list[dict[str, Any]]) -> dict[str, list[str]]:
                 variant["benchmark"]["isolated_memory"]["current_rss_bytes_median"],
             ),
         ),
+        "size_vs_batch1_latency": _pareto_frontier_for(
+            variants,
+            lambda variant: (
+                variant["artifact"]["size_bytes"],
+                batch_one(variant)["latency_seconds_p50"],
+            ),
+        ),
+        "batch1_latency_vs_f1": _pareto_frontier_for(
+            variants,
+            lambda variant: (
+                batch_one(variant)["latency_seconds_p50"],
+                -variant["metrics"]["macro_f1"],
+            ),
+        ),
+        "init_rss_latency": _pareto_frontier_for(
+            variants,
+            lambda variant: (
+                variant["benchmark"]["initialization_seconds_isolated_median"],
+                variant["benchmark"]["isolated_memory"]["current_rss_bytes_median"],
+                batch_one(variant)["latency_seconds_p50"],
+            ),
+        ),
     }
 
 
@@ -434,15 +669,4 @@ def _pareto_frontier_for(
     variants: list[dict[str, Any]],
     point_factory: Any,
 ) -> list[str]:
-    points = {variant["name"]: point_factory(variant) for variant in variants}
-    frontier = []
-    for name, point in points.items():
-        dominated = any(
-            other != name
-            and all(points[other][index] <= point[index] for index in range(3))
-            and any(points[other][index] < point[index] for index in range(3))
-            for other in points
-        )
-        if not dominated:
-            frontier.append(name)
-    return frontier
+    return nondominated_names({variant["name"]: point_factory(variant) for variant in variants})
