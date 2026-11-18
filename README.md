@@ -1,4 +1,4 @@
-# Edge AI Bench
+# ML Optimization Bench
 
 Research harness for measuring the tradeoffs between model accuracy, artifact size,
 latency, and memory when deploying medical AI models on CPU devices.
@@ -156,21 +156,8 @@ limitations, and current conclusions, is in [study-draft.md](study-draft.md).
 Workshop-paper tables and figures can be regenerated with
 `python paper/generate_assets.py`; see [paper/README.md](paper/README.md).
 The frozen paper manifest and research framing are in
-[paper/manifest-lock.json](paper/manifest-lock.json) and
-[paper/research-framing.md](paper/research-framing.md).
+[paper/manifest-lock.json](paper/manifest-lock.json).
 
-## Interactive study explorer
-
-The project also includes a dependency-free browser presentation in
-[`web/`](web/). It turns the measured deployment variants into an interactive
-story with a waveform view, selectable model variants, objective-based
-recommendations, and a size/latency/accuracy trade-off chart.
-
-Serve it locally from the repository root:
-
-```bash
-python -m http.server 8000
-```
 
 Then open <http://localhost:8000/web/>. The displayed measurements are derived
 from the full-data sensitivity results in `study-draft.md`; they are
